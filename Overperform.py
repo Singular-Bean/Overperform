@@ -1,21 +1,76 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import requests
-from scipy.stats import binom
-from itertools import combinations
+from collections import defaultdict
+import matplotlib.patches as patches
 
-def new_sig_test(xgs, outcomes):
-    goals = outcomes.count('goal')
-    misses = outcomes.count('miss')
-    n = len(outcomes)
-    heads_positions = list(combinations(range(n), goals))
-    total_sig = 0
-    for positions in heads_positions:
-        combo = [1 - p for p in xgs]
-        for pos in positions:
-            combo[pos] = xgs[pos]
-        total_sig += sum(combo)
-    return total_sig
+def zerodivide(numerator, denominator):
+    if denominator == 0:
+        return 0
+    else:
+        return numerator/denominator
+
+def find(x, y):
+    if y in x:
+        return x[y]
+    else:
+        return None
+
+def nonround(number, places):
+    if number != None:
+        return round(number, places)
+    else:
+        return None
+
+
+def probability_of_heads(probabilities, target_heads):
+    """
+    Calculate the probability of getting exactly `target_heads` heads from flipping each coin once.
+
+    Args:
+        probabilities (list): A list of probabilities for getting heads for each biased coin.
+        target_heads (int): The desired number of heads.
+
+    Returns:
+        float: The probability of getting exactly `target_heads` heads.
+    """
+    # Initial distribution: 0 heads with probability 1
+    dp = defaultdict(float)
+    dp[0] = 1.0
+
+    for p in probabilities:
+        # Update the distribution in reverse to avoid overwriting values in the same step
+        for h in range(len(dp), 0, -1):
+            dp[h] = dp[h] * (1 - p) + dp[h - 1] * p
+        dp[0] *= (1 - p)
+
+    return dp[target_heads] if target_heads in dp else 0.0
+
+def are_you_in_the_positive(xgs, goals):
+    if goals > 0:
+        if probability_of_heads(xgs, goals + 1) < probability_of_heads(xgs, goals) < probability_of_heads(xgs, goals - 1):
+            return 1
+        elif probability_of_heads(xgs, goals + 1) < probability_of_heads(xgs, goals) and probability_of_heads(xgs, goals - 1) < probability_of_heads(xgs, goals):
+            return 0
+        else:
+            return -1
+    elif goals == 0:
+        if probability_of_heads(xgs, 1) < probability_of_heads(xgs, 0):
+            return 0
+        else:
+            return -1
+    elif goals == len(xgs):
+        if probability_of_heads(xgs, goals - 1) < probability_of_heads(xgs, goals):
+            return 0
+    else:
+        return -1
+
+def least_signifcant(xgs):
+    yes = []
+    for x in range(0, len(xgs) + 1):
+        if are_you_in_the_positive(xgs, x) == 0:
+            yes.append(x)
+    return xmean(yes)
 
 
 def xmean(alist):
@@ -64,12 +119,14 @@ def get_all_shots(playerid):
             if check_website(page):
                 matchpage = fetch_and_parse_json(page)['events']
                 for x in range(0, len(matchpage)):
-                    if 'hasXg' in matchpage[x]:
-                        list_of_matches.append(matchpage[x]['id'])
+                    if 'hasXg' in matchpage[x] and check_website("https://www.sofascore.com/api/v1/event/"+ str(matchpage[x]['id']) +"/shotmap/player/" + str(playerid)):
+                        if 'xg' in fetch_and_parse_json("https://www.sofascore.com/api/v1/event/"+ str(matchpage[x]['id']) +"/shotmap/player/" + str(playerid))['shotmap'][0]:
+                            list_of_matches.append(matchpage[x]['id'])
             else:
                 switch = "Off"
                 break
     shots = []
+    others = []
     for i in range(0, len(list_of_matches)):
         if check_website("http://www.sofascore.com/api/v1/event/" + str(list_of_matches[i]) + "/shotmap/player/" + str(
                 playerid)):
@@ -78,11 +135,12 @@ def get_all_shots(playerid):
                     playerid))['shotmap']
             for x in range(0, len(match)):
                 shots.append(match[x]['xg'])
+                others.append((nonround(match[x]['xg'], 2), (nonround(find(match[x], 'xgot'), 2)), match[x]['playerCoordinates'], match[x]['goalMouthCoordinates'], match[x]['draw'], find(match[x], 'blockCoodinates'), match[x]['shotType']))
                 if match[x]['shotType'] == "goal":
                     shots.append("goal")
                 else:
                     shots.append("miss")
-    return shots
+    return shots, others
 
 
 def calculate_xg_stats(xg_list, outcomes_list):
@@ -106,8 +164,6 @@ def calculate_xg_stats(xg_list, outcomes_list):
     one_std_above = mean_xg + std_dev_xg
 
     # Create segments
-    def mean(alist):
-        return sum(alist) / len(alist) if alist else 0
 
     def range_decrease(smallest_chunk, x):
         return max(smallest_chunk - (x / 100), 0)
@@ -136,9 +192,7 @@ def calculate_xg_stats(xg_list, outcomes_list):
                             new_range.append(select_range[z])
                             new_outcomes.append(select_outcomes[z])
                     goal_count = new_outcomes.count('goal')
-                    sample_size = len(new_range)
-                    probability = mean(new_range)
-                    if binom.pmf(goal_count, sample_size, probability) <= significance:
+                    if probability_of_heads(new_range, goal_count) <= significance:
                         return round(lower, 2), round(upper, 2)
 
         significant_chunks = []
@@ -301,24 +355,13 @@ def calculate_xg_stats(xg_list, outcomes_list):
             empty.append((lis[h], round(lis[h + 1]-0.01, 2)))
         elif h == len(lis)-2:
             empty.append((lis[h], lis[h + 1]))
+    for g in range(0, len(empty)):
+        if empty[g][0] == 0.01:
+            empty[g] = (0.00, empty[g][1])
+        elif empty[g][1] == 0.99:
+            empty[g] = (empty[g][0], 1.00)
 
 
-    """one_to_100 = [0.00, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10, 0.11, 0.12, 0.13, 0.14, 0.15, 0.16,
-                  0.17, 0.18, 0.19, 0.20, 0.21, 0.22, 0.23, 0.24, 0.25, 0.26, 0.27, 0.28, 0.29, 0.30, 0.31, 0.32, 0.33,
-                  0.34, 0.35, 0.36, 0.37, 0.38, 0.39, 0.40, 0.41, 0.42, 0.43, 0.44, 0.45, 0.46, 0.47, 0.48, 0.49, 0.50,
-                  0.51, 0.52, 0.53, 0.54, 0.55, 0.56, 0.57, 0.58, 0.59, 0.60, 0.61, 0.62, 0.63, 0.64, 0.65, 0.66, 0.67,
-                  0.68, 0.69, 0.70, 0.71, 0.72, 0.73, 0.74, 0.75, 0.76, 0.77, 0.78, 0.79, 0.80, 0.81, 0.82, 0.83, 0.84,
-                  0.85, 0.86, 0.87, 0.88, 0.89, 0.90, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99]
-    for c in filtered_list:
-        tup = ()
-        for d in range(int((100 * c[0])), int((100 * c[1]))):
-            e = d / 100
-            if e in one_to_100:
-                tup += (e,)
-                one_to_100.remove(e)
-        if len(tup) > 1:
-            empty.append(tup)
-    empty.sort(key=lambda x: x[0])"""
     segments = []
     for f in empty:
         if len(f) > 1:
@@ -344,7 +387,6 @@ def calculate_xg_stats(xg_list, outcomes_list):
         for group in segments:
             lower, upper = map(float, group.split('-'))
             group_boundaries.append((lower, upper))
-
         # Initialize a list to store the xG values and outcomes in each group
         grouped_data = []
 
@@ -375,8 +417,11 @@ def calculate_xg_stats(xg_list, outcomes_list):
         for b in grouped_xg_outcomes:
             bxgs = b[0::2]
             boutcomes = b[1::2]
-            if sum(bxgs) <= boutcomes.count('goal'):
+            positive = are_you_in_the_positive(bxgs, boutcomes.count('goal'))
+            if positive == 1:
                 samp.append("+")
+            elif positive == 0:
+                samp.append("0")
             else:
                 samp.append("-")
         merged_segments = []
@@ -441,40 +486,47 @@ def split_into_groups_with_outcomes(xg_list, outcomes, groups):
         group_xg = []
         group_outcomes = []
         for xg, outcome in sorted_pairs:
-            if lower <= round(xg, 2) < upper or (round(xg, 2) == upper and upper == group_boundaries[-1][1]):
+            if lower <= round(xg, 2) <= upper or (round(xg, 2) == upper and upper == group_boundaries[-1][1]):
                 group_xg.append(xg)
                 group_outcomes.append(outcome)
-        grouped_data.append((f"{lower}-{upper}", group_xg, group_outcomes))
+        if len(group_xg) > 0:
+            grouped_data.append((f"{lower}-{upper}", group_xg, group_outcomes))
     return grouped_data
 
 
 def chosen_segment(chosen_segment):
     return {
         'x': chosen_segment[2].count('goal'),
-        'n': len(chosen_segment[2]),
-        'p': xmean(chosen_segment[1]),
+        'p': chosen_segment[1],
+    }
+
+def chosen_seg_least(chosen_segment):
+    return {
+        'x': least_signifcant(chosen_segment[1]),
+        'p': chosen_segment[1],
     }
 
 
 def significance_test(chosen_segment):
-    return binom.pmf(chosen_segment['x'], chosen_segment['n'], chosen_segment['p'])
+    return probability_of_heads(chosen_segment['p'], chosen_segment['x'])
 
 
-namedplayerid = playerid()
 
-xgs_and_outcomes = get_all_shots(namedplayerid)
+
+everything = get_all_shots(playerid())
+xgs_and_outcomes = everything[0]
+others = everything[1]
 
 xgs = []
 
 outcomes = []
 
 for x in xgs_and_outcomes:
-    if x == len(xgs_and_outcomes) // 10:
-        print("Loading...")
     if isinstance(x, float):
         xgs.append(x)
     else:
         outcomes.append(x)
+
 sorted_pairs = sorted(zip(xgs, outcomes))
 
 sort_xg = []
@@ -491,77 +543,197 @@ result = split_into_groups_with_outcomes(xgs, outcomes, groups)
 for m in range(0, len(result)):
     print(f"Segment: {result[m][0]}")
     print(f"Number of shots: {len(result[m][1])}")
-    print(f"Number of goals: {result[m][2].count('goal')}")
-    print(f"Expected goals: {xmean(result[m][1]) * len(result[m][1])}")
+    print(f"Expected goals: {least_signifcant(result[m][1])}")
     print(f"Actual goals: {result[m][2].count('goal')}")
-    print(f"Significance: {significance_test(chosen_segment(result[m]))}")
-    print(f"Significant enough? {significance_test(chosen_segment(result[m])) <= 0.1}")
     print("\n")
 
 piss = []
 for j in range(0, len(result)):
     piss.append((result[j][0], len(result[j][1]), result[j][2].count('goal'), xmean(result[j][1]) * len(result[j][1]),
-         significance_test(chosen_segment(result[j]))))
-
-"""first = [result[0][0], len(result[0][1]), result[0][2].count('goal'), xmean(result[0][1]) * len(result[0][1]),
-         significance_test(chosen_segment(result[0]))]
-second = [result[1][0], len(result[1][1]), result[1][2].count('goal'), xmean(result[1][1]) * len(result[1][1]),
-          significance_test(chosen_segment(result[1]))]
-third = [result[2][0], len(result[2][1]), result[2][2].count('goal'), xmean(result[2][1]) * len(result[2][1]),
-         significance_test(chosen_segment(result[2]))]
-fourth = [result[3][0], len(result[3][1]), result[3][2].count('goal'), xmean(result[3][1]) * len(result[3][1]),
-          significance_test(chosen_segment(result[3]))]
-fifth = [result[4][0], len(result[4][1]), result[4][2].count('goal'), xmean(result[4][1]) * len(result[4][1]),
-         significance_test(chosen_segment(result[4]))]
-sixth = [result[5][0], len(result[5][1]), result[5][2].count('goal'), xmean(result[5][1]) * len(result[5][1]),
-         significance_test(chosen_segment(result[5]))]
-seventh = [result[6][0], len(result[6][1]), result[6][2].count('goal'), xmean(result[6][1]) * len(result[6][1]),
-           significance_test(chosen_segment(result[6]))]"""
+         significance_test(chosen_segment(result[j])), significance_test(chosen_seg_least(result[j]))))
 
 
-def plot_xg_barchart(data):
-    """
+"""
     Parameters:
         data (list): A list containing lists with data for each segment.
                      Format for each segment:
                      [xg_range, num_shots, goals_scored, xg_scored, significance]
-    """
+"""
     # Names for each segment (xg_range)
-    segment_names = [item[0] for item in data]
-    num_shots = [item[1] for item in data]
-    goals_scored = [item[2] for item in data]
-    xg_scored = [item[3] for item in data]
-    significance = [item[4] for item in data]
+segment_names = [item[0] for item in piss]
+num_shots = [item[1] for item in piss]
+goals_scored = [item[2] for item in piss]
+xg_scored = [item[3] for item in piss]
+significance = [item[4] for item in piss]
+least = [item[5] for item in piss]
 
-    # Calculate bar heights and colors
-    heights = [1 - s if g >= x else -(1 - s) for s, g, x in zip(significance, goals_scored, xg_scored)]
-    colors = ['green' if g >= x else 'red' for g, x in zip(goals_scored, xg_scored)]
+# Calculate bar heights and colors
+heights = []
+for s, g, x, l in zip(significance, goals_scored, xg_scored, least):
+    if g > x:
+        heights.append(1 - (s/l))
+    elif g == x:
+        heights.append(0)
+    else:
+        heights.append(-1 + (s/l))
+colors = ['green' if g >= x else 'red' for g, x in zip(goals_scored, xg_scored)]
 
-    # Create the plot
-    fig, ax = plt.subplots(figsize=(10, 5))
-    bars = ax.bar(segment_names, heights, color=colors)
+# Create the plot
+fig, ax = plt.subplots(figsize=(10, 5))
+bars = ax.bar(segment_names, heights, color=colors)
 
-    # Add shot numbers below the xg ranges
-    for i, shots in enumerate(num_shots):
-        ax.text(i, -1.05, f'({shots})', ha='center', va='top')
+# Add shot numbers below the xg ranges
+for i, shots in enumerate(num_shots):
+    ax.text(i, -1.05, f'({shots})', ha='center', va='top')
 
-    # Set y-axis limits
-    ax.set_ylim(-1.2, 1)  # Extend the lower limit for better visibility of shot counts
+# Set y-axis limits
+ax.set_ylim(-1.2, 1)  # Extend the lower limit for better visibility of shot counts
 
-    # Add labels and title
-    ax.set_ylabel('Performance (1 - Significance)')
-    ax.set_title('Expected Goals Analysis')
+# Add labels and title
+ax.set_ylabel('Performance (1 - Significance)')
+ax.set_title('Expected Goals Analysis')
 
-    # Show grid for clarity
-    ax.grid(axis='y', linestyle='--', alpha=0.7)
+# Show grid for clarity
+ax.grid(axis='y', linestyle='--', alpha=0.7)
 
-    # Adjust the plot layout to prevent clipping
-    plt.tight_layout()
+# Adjust the plot layout to prevent clipping
+plt.tight_layout()
 
+plt.show()
+
+
+positives = []
+equals = []
+negatives = []
+
+for g in range(0, len(heights)):
+    if heights[g] > 0:
+        positives.append(segment_names[g])
+    elif heights[g] == 0:
+        equals.append(segment_names[g])
+    else:
+        negatives.append(segment_names[g])
+shots = []
+sig_info = []
+answer = input("Which shots would you like to see?\na) Overperforming\nb) Normally Performing\nc) Underperforming\n\n")
+if answer == "a":
+    for x in positives:
+        lower, upper = map(float, x.split('-'))
+        for y in others:
+            if lower <= y[0] <= upper:
+                shots.append(y)
+        for z in segment_names:
+            if z == x:
+                sig_info.append(piss[segment_names.index(z)])
+elif answer == "b":
+    for x in equals:
+        lower, upper = map(float, x.split('-'))
+        for y in others:
+            if lower <= y[0] <= upper:
+                shots.append(y)
+        for z in segment_names:
+            if z == x:
+                sig_info.append(piss[segment_names.index(z)])
+else:
+    for x in negatives:
+        lower, upper = map(float, x.split('-'))
+        for y in others:
+            if lower <= y[0] <= upper:
+                shots.append(y)
+        for z in segment_names:
+            if z == x:
+                sig_info.append(piss[segment_names.index(z)])
+
+
+# Function to draw the pitch (same as before)
+def draw_pitch():
+    fig, ax = plt.subplots(figsize=(10, 7.5))
+
+    # Set pitch dimensions
+    pitch_length = 100  # y-axis (from 0 to 100)
+    pitch_width = 75  # x-axis (from 0 to 52)
+
+    # Add green stripes to the pitch
+    stripe_width = pitch_width / 4
+    for i in range(4):
+        ax.add_patch(patches.Rectangle((0, i * stripe_width), pitch_length, stripe_width,
+                                       color='#446C46' if i % 2 == 0 else '#537855', zorder=0))
+
+    # Pitch Outline & Centre Line (for the half-pitch)
+    plt.plot([0, 0], [0, 75], color="black", linewidth=4)
+    plt.plot([0, 100], [75, 75], color="black", linewidth=4)
+    plt.plot([100, 100], [75, 0], color="black", linewidth=4)
+    plt.plot([100, 0], [0, 0], color="black", linewidth=4)
+
+    # Penalty Area
+    plt.plot([20, 20], [50, 75], color="black", linewidth=4)
+    plt.plot([80, 80], [50, 75], color="black", linewidth=4)
+    plt.plot([20, 80], [50, 50], color="black", linewidth=4)
+
+    # 6-yard Box
+    plt.plot([36.5, 36.5], [67, 75], color="black", linewidth=4)
+    plt.plot([63.5, 63.5], [67, 75], color="black", linewidth=4)
+    plt.plot([36.5, 63.5], [67, 67], color="black", linewidth=4)
+
+    # Goal
+    plt.plot([42.5, 57.5], [74, 74], color="black", linewidth=8, alpha=0.6)
+
+    # Penalty Spot and Centre Spot
+    penSpot = plt.Circle((50, 59), 0.5, color="black")
+    ax.add_patch(penSpot)
+
+    return fig, ax
+
+
+# Function to plot shots based on selected xG value
+def plot_shots(shots, sig_info):
+    fig, ax = draw_pitch()
+    goalcount = 0
+    misscount = 0
+
+    xglis = [item[0] for item in shots]
+    goals = [item[6] for item in shots].count('goal')
+    for shot in shots:
+        xg, xgot, player_coords, shot_coords, draw_info, block_coords, shot_type = shot
+
+        # Filter based on xG range
+        if xg != None:
+            shot_x = 1.4423*player_coords['x']
+            shot_y = player_coords['y']
+
+            startdrawy = draw_info['start']['x']
+            startdrawx = 1.4423*draw_info['start']['y']
+            if draw_info.get('block') != None:
+                blockdrawy = draw_info['block']['x']
+                blockdrawx = 1.4423*draw_info['block']['y']
+            enddrawy = draw_info['end']['x']
+            enddrawx = 1.4423*draw_info['end']['y']
+
+
+            # Ensure shot_x and shot_y are in the correct range
+            if 0 <= shot_x <= 75 and 0 <= shot_y <= 100 and shot_type == 'goal':
+                goalcount += 1
+                # Plot the shot, with shot_x becoming y-axis and shot_y becoming x-axis
+                ax.scatter(shot_y, 75 - shot_x, color='red', s=100, alpha=0.6, edgecolor='black')
+                ax.plot([startdrawy, enddrawy], [75 - startdrawx, 75 - enddrawx], color='red', linewidth=2, alpha=0.0)
+            elif 0 <= shot_x <= 75 and 0 <= shot_y <= 100 and draw_info.get('block') != None:
+                misscount += 1
+                # Plot the shot, with shot_x becoming y-axis and shot_y becoming x-axis
+                ax.scatter(shot_y, 75 - shot_x, color='white', s=100, alpha=0.6, edgecolor='black')
+                ax.plot([startdrawy, blockdrawy], [75 - startdrawx, 75 - blockdrawx], color='white', linewidth=1, alpha=0.0)
+            elif 0 <= shot_x <= 75 and 0 <= shot_y <= 100:
+                misscount += 1
+                # Plot the shot, with shot_x becoming y-axis and shot_y becoming x-axis
+                ax.scatter(shot_y, 75 - shot_x, color='white', s=100, alpha=0.6, edgecolor='black')
+                ax.plot([startdrawy, enddrawy], [75 - startdrawx, 75 - enddrawx], color='white', linewidth=1, alpha=0.0)
+    if goalcount >= least_signifcant(xglis):
+        posneg = 1
+    else:
+        posneg = -1
+    plt.xlim(-2, 102)  # Matches the range of the half-pitch (length)
+    plt.ylim(-2, 77)  # Matches the range of the half-pitch (width)
+    plt.gca().set_aspect('equal', adjustable='box')
+    plt.text(50, -7.5, "Goals scored = " + str(goalcount) + "  Score rate = " + str(round(goalcount/(goalcount+misscount), 4)) + "%" + "  Expected goals = " + str(least_signifcant(xglis)) + "  Over/Underperformance index = " + str(round(posneg * (1 - zerodivide(probability_of_heads(xglis, goals), probability_of_heads(xglis, least_signifcant(xglis)))), 7)), ha='center', fontsize=12, color='black')
     plt.show()
 
-
-##data = [first, second, third, fourth, fifth, sixth, seventh]
-
-# Plot the chart
-plot_xg_barchart(piss)
+plot_shots(shots, sig_info)
