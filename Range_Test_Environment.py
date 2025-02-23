@@ -1,5 +1,4 @@
 from matplotlib import pyplot as plt
-from scipy.stats import binom
 from itertools import combinations
 import math
 from collections import defaultdict

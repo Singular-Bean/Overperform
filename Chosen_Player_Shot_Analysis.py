@@ -119,8 +119,8 @@ def get_all_shots(playerid):
             if check_website(page):
                 matchpage = fetch_and_parse_json(page)['events']
                 for x in range(0, len(matchpage)):
-                    if 'hasXg' in matchpage[x] and check_website("https://www.sofascore.com/api/v1/event/"+ str(matchpage[x]['id']) +"/shotmap/player/" + str(playerid)):
-                        if 'xg' in fetch_and_parse_json("https://www.sofascore.com/api/v1/event/"+ str(matchpage[x]['id']) +"/shotmap/player/" + str(playerid))['shotmap'][0]:
+                    if 'hasXg' in matchpage[x] and check_website("http://www.sofascore.com/api/v1/event/"+ str(matchpage[x]['id']) +"/shotmap/player/" + str(playerid)):
+                        if 'xg' in fetch_and_parse_json("http://www.sofascore.com/api/v1/event/"+ str(matchpage[x]['id']) +"/shotmap/player/" + str(playerid))['shotmap'][0]:
                             list_of_matches.append(matchpage[x]['id'])
             else:
                 switch = "Off"
