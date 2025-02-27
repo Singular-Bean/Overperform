@@ -3,7 +3,6 @@ import numpy as np
 import requests
 from collections import defaultdict
 import matplotlib.patches as patches
-from scipy.stats import binom_gen
 
 
 def zerodivide(numerator, denominator):
@@ -733,7 +732,9 @@ def plot_shots(shots, sig_info):
     else:
         posneg = -1
     plt.xlim(-2, 102)  # Matches the range of the half-pitch (length)
-    plt.ylim(-2, 77)  # Matches the range of the half-pitch (width)
+    plt.ylim(-2, 77) # Matches the range of the half-pitch (width)
+    plt.yticks([])
+    plt.xticks([])
     plt.gca().set_aspect('equal', adjustable='box')
     plt.text(50, -7.5, f"Goals scored = {goalcount}  Score rate = {round(goalcount/(goalcount+misscount), 4)}%  Expected goals = {least_signifcant(xglis)}  Over/Underperformance index = {round(posneg * (1 - zerodivide(probability_of_target_goals(xglis, goals), probability_of_target_goals(xglis, least_signifcant(xglis)))), 7)}", ha='center', fontsize=12, color='black')
     plt.show()
